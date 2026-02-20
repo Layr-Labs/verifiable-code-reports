@@ -1,0 +1,15 @@
+node_modules/
+dist/
+tmp/
+.env
+.env.local
+*.log
+
+# Debug/test artifacts
+orchestrator-raw-output.txt
+report-output.json
+report-output.md
+sdk-test.log
+
+# OS
+.DS_Store
