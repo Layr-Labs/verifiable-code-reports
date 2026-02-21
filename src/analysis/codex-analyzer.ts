@@ -50,7 +50,12 @@ export interface CodexAnalysisResult {
 }
 
 export async function runCodexAnalysis(repoPath: string): Promise<CodexAnalysisResult> {
-  const codex = new Codex();
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY not set — cannot run Codex analysis");
+  }
+
+  const codex = new Codex({ apiKey });
 
   const thread = codex.startThread({
     sandboxMode: "read-only",

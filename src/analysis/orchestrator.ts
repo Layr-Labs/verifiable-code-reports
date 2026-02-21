@@ -142,11 +142,16 @@ export async function runClaudeAnalysis(repoPath: string): Promise<AnalysisResul
   const allAssistantText: string[] = [];
   const logs: string[] = [];
 
+  // Allowlist env vars for the SDK subprocess — no secrets beyond what it needs
   const sdkEnv: Record<string, string> = {
     CLAUDECODE: "",
     PATH: process.env.PATH || "",
     HOME: process.env.HOME || "",
     TMPDIR: process.env.TMPDIR || "",
+    LANG: process.env.LANG || "en_US.UTF-8",
+    USER: process.env.USER || "",
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || "",
+    XDG_DATA_HOME: process.env.XDG_DATA_HOME || "",
   };
 
   if (config.useBedrock) {
@@ -156,6 +161,8 @@ export async function runClaudeAnalysis(repoPath: string): Promise<AnalysisResul
   } else if (process.env.ANTHROPIC_API_KEY) {
     sdkEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   }
+
+  console.log(`[claude] Starting SDK with model=${config.useBedrock ? BEDROCK_MODEL : DIRECT_MODEL} bedrock=${config.useBedrock} token_set=${!!sdkEnv.AWS_BEARER_TOKEN_BEDROCK}`);
 
   for await (const message of query({
     prompt: ORCHESTRATOR_PROMPT(repoPath),
@@ -185,9 +192,7 @@ export async function runClaudeAnalysis(repoPath: string): Promise<AnalysisResul
       },
       env: sdkEnv,
       stderr: (data: string) => {
-        if (data.includes("error") || data.includes("Error")) {
-          console.error("[claude]", data.trim());
-        }
+        console.error("[claude-sdk]", data.trim());
       },
     },
   })) {
