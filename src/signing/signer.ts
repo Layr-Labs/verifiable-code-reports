@@ -8,7 +8,7 @@ export function getSignerAddress(): `0x${string}` {
 
 export interface SignedReport {
   report: Report;
-  logs: { claude: string[]; codex: string[] };
+  logs: { claude: string[] };
   attestation: {
     reportHash: `0x${string}`;
     contentHash: `0x${string}`;
@@ -40,7 +40,7 @@ export interface SignedReport {
  */
 export async function signReport(
   report: Report,
-  logs: { claude: string[]; codex: string[] },
+  logs: { claude: string[] },
   provenance?: {
     appAddress?: string;
     imageDigest?: string;

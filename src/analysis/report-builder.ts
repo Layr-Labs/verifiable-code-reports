@@ -1,4 +1,4 @@
-import type { Report, CategoryReport, CodexAnalysis } from "../report/schema.js";
+import type { Report, CategoryReport } from "../report/schema.js";
 import { ReportSchema, CategoryReport as CategoryReportSchema } from "../report/schema.js";
 import { generateMarkdown } from "../report/markdown.js";
 
@@ -35,27 +35,10 @@ function buildCategories(analysis: RawAnalysis): Record<string, CategoryReport> 
 
 export function buildReport(
   claudeAnalysis: RawAnalysis,
-  codexAnalysis: RawAnalysis | null,
   repoUrl: string,
   commitSha: string,
 ): Report {
   const categories = buildCategories(claudeAnalysis);
-
-  const codexSection: CodexAnalysis = codexAnalysis
-    ? {
-        trustLabel: codexAnalysis.trustLabel as any,
-        trustLabelReason: codexAnalysis.trustLabelReason,
-        executiveSummary: codexAnalysis.executiveSummary,
-        categories: buildCategories(codexAnalysis),
-        agrees: codexAnalysis.trustLabel === claudeAnalysis.trustLabel,
-      }
-    : {
-        trustLabel: claudeAnalysis.trustLabel as any,
-        trustLabelReason: "Codex analysis was not available.",
-        executiveSummary: "",
-        categories: {},
-        agrees: true,
-      };
 
   const reportWithoutMarkdown = {
     version: "2.0.0" as const,
@@ -67,7 +50,6 @@ export function buildReport(
     trustLabelReason: claudeAnalysis.trustLabelReason,
     executiveSummary: claudeAnalysis.executiveSummary,
     categories,
-    codexAnalysis: codexSection,
   };
 
   const markdownSummary = generateMarkdown(reportWithoutMarkdown);
