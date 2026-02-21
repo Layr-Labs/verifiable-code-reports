@@ -3,7 +3,7 @@ import { config } from "./config.js";
 import { sql } from "./db/client.js";
 import { isRegisteredApp } from "./eigencloud/contract.js";
 import { pollApp } from "./eigencloud/poller.js";
-import { queueStatus } from "./eigencloud/pipeline.js";
+import { queueStatus, manualRetryBuild, manualRetryApp } from "./eigencloud/pipeline.js";
 import {
   sanitizeAddress,
   sanitizeImageDigest,
@@ -13,6 +13,14 @@ import {
 
 export const app = express();
 app.use(express.json({ limit: "1mb" }));
+
+app.use((_req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-client-id");
+  if (_req.method === "OPTIONS") { res.sendStatus(204); return; }
+  next();
+});
 
 // ── Health ──────────────────────────────────────────────────────────
 
@@ -254,7 +262,7 @@ app.get("/api/eigencloud/builds/:appAddress", async (req, res) => {
 
     const builds = await sql`
       SELECT id, image_digest, block_number, registry, repo_url, git_ref,
-             provenance_verified, status, created_at
+             provenance_verified, status, retries, last_attempt_at, created_at
       FROM builds
       WHERE app_address = ${addr}
       ORDER BY created_at DESC
@@ -263,6 +271,45 @@ app.get("/api/eigencloud/builds/:appAddress", async (req, res) => {
     res.json({ builds, appAddress: addr });
   } catch (err) {
     console.error("Builds error:", err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// ── Retry ───────────────────────────────────────────────────────────
+
+app.post("/api/eigencloud/retry/:appAddress", async (req, res) => {
+  try {
+    let addr: string;
+    try { addr = sanitizeAddress(req.params.appAddress); } catch {
+      res.status(400).json({ error: "Invalid address" });
+      return;
+    }
+
+    const count = await manualRetryApp(addr);
+    res.json({ retriggered: count, appAddress: addr });
+  } catch (err) {
+    console.error("Retry app error:", err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+app.post("/api/eigencloud/retry/:appAddress/:buildId", async (req, res) => {
+  try {
+    const buildId = parseInt(req.params.buildId, 10);
+    if (!Number.isFinite(buildId) || buildId < 1) {
+      res.status(400).json({ error: "Invalid buildId" });
+      return;
+    }
+
+    const ok = await manualRetryBuild(buildId);
+    if (!ok) {
+      res.status(404).json({ error: "Build not found or not in failed state" });
+      return;
+    }
+
+    res.json({ retriggered: true, buildId });
+  } catch (err) {
+    console.error("Retry build error:", err);
     res.status(500).json({ error: "Internal error" });
   }
 });

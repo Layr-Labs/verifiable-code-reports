@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS builds (
   provenance_verified   BOOLEAN DEFAULT FALSE,
   status                TEXT NOT NULL DEFAULT 'pending',
   retries               INT NOT NULL DEFAULT 0,
+  last_attempt_at       TIMESTAMPTZ,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(app_address, image_digest)
 );

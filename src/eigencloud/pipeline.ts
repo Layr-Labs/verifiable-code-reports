@@ -4,7 +4,8 @@ import { analyzeRepo } from "../analysis/orchestrator.js";
 import { signReport } from "../signing/signer.js";
 
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || "3", 10);
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 5;
+const RETRY_DELAY_MINUTES = 30;
 const queue: { buildId: number; appAddress: string }[] = [];
 let running = 0;
 const activeGitRefs = new Set<string>(); // prevent duplicate analysis of same commit
@@ -45,6 +46,34 @@ export async function resumePendingBuilds() {
   }
 }
 
+/** Manual retry: reset a failed build so it can be re-analyzed. Resets retry count. */
+export async function manualRetryBuild(buildId: number): Promise<boolean> {
+  const [build] = await sql`
+    SELECT id, app_address FROM builds WHERE id = ${buildId} AND status = 'failed'
+  `;
+  if (!build) return false;
+
+  await sql`UPDATE builds SET status = 'pending', retries = 0, last_attempt_at = NULL WHERE id = ${buildId}`;
+  enqueueBuild(build.id, build.app_address);
+  console.log(`Build ${buildId} manually re-queued for retry`);
+  return true;
+}
+
+/** Manual retry: reset ALL failed builds for an app. */
+export async function manualRetryApp(appAddress: string): Promise<number> {
+  const failed = await sql`
+    SELECT id, app_address FROM builds WHERE app_address = ${appAddress} AND status = 'failed'
+  `;
+  for (const build of failed) {
+    await sql`UPDATE builds SET status = 'pending', retries = 0, last_attempt_at = NULL WHERE id = ${build.id}`;
+    enqueueBuild(build.id, build.app_address);
+  }
+  if (failed.length > 0) {
+    console.log(`${failed.length} failed build(s) for ${appAddress} manually re-queued`);
+  }
+  return failed.length;
+}
+
 async function processBuild(buildId: number, appAddress: string) {
   const [build] = await sql`SELECT * FROM builds WHERE id = ${buildId}`;
   if (!build?.repo_url || !build?.git_ref) {
@@ -62,7 +91,7 @@ async function processBuild(buildId: number, appAddress: string) {
     return;
   }
 
-  await sql`UPDATE builds SET status = 'analyzing', retries = retries + 1 WHERE id = ${buildId}`;
+  await sql`UPDATE builds SET status = 'analyzing', retries = retries + 1, last_attempt_at = NOW() WHERE id = ${buildId}`;
   activeGitRefs.add(refKey);
   console.log(`Analyzing build ${buildId} (${appAddress}) — ${refKey} [attempt ${build.retries + 1}]`);
 
