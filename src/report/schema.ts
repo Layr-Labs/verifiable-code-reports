@@ -22,18 +22,6 @@ export const CategoryReport = z.object({
 });
 export type CategoryReport = z.infer<typeof CategoryReport>;
 
-export const CodexReview = z.object({
-  missedAssumptions: z.array(TrustAssumption),
-  disputedAssumptions: z.array(
-    z.object({
-      assumptionId: z.string(),
-      reason: z.string(),
-    })
-  ),
-  overallAssessment: z.string(),
-});
-export type CodexReview = z.infer<typeof CodexReview>;
-
 export const Categories = z.object({
   adminPrivileges: CategoryReport.optional(),
   upgradeMechanisms: CategoryReport.optional(),
@@ -52,8 +40,17 @@ export const TrustLabel = z.enum([
 ]);
 export type TrustLabel = z.infer<typeof TrustLabel>;
 
+export const CodexAnalysis = z.object({
+  trustLabel: TrustLabel,
+  trustLabelReason: z.string(),
+  executiveSummary: z.string(),
+  categories: Categories,
+  agrees: z.boolean(),
+});
+export type CodexAnalysis = z.infer<typeof CodexAnalysis>;
+
 export const ReportSchema = z.object({
-  version: z.literal("1.0.0"),
+  version: z.literal("2.0.0"),
   generatedAt: z.string(),
   repoUrl: z.string(),
   repoCommit: z.string(),
@@ -62,12 +59,10 @@ export const ReportSchema = z.object({
   trustLabelReason: z.string(),
   executiveSummary: z.string(),
   categories: Categories,
-  codexReview: CodexReview,
+  codexAnalysis: CodexAnalysis,
   markdownSummary: z.string(),
 });
 export type Report = z.infer<typeof ReportSchema>;
 
-// JSON Schemas using zod v4 built-in toJSONSchema
 export const reportJsonSchema = z.toJSONSchema(ReportSchema);
-export const codexReviewJsonSchema = z.toJSONSchema(CodexReview);
 export const categoryReportJsonSchema = z.toJSONSchema(CategoryReport);

@@ -1,8 +1,12 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { agentDefinitions } from "./agents.js";
-import { buildReport, parseCategoryReport } from "./report-builder.js";
-import { runCodexReview } from "./codex-reviewer.js";
-import type { Report, CodexReview } from "../report/schema.js";
+import { buildReport, parseCategoryReport, type RawAnalysis } from "./report-builder.js";
+import { runCodexAnalysis } from "./codex-analyzer.js";
+import { config } from "../config.js";
+import type { Report } from "../report/schema.js";
+
+const BEDROCK_MODEL = "us.anthropic.claude-opus-4-6-v1";
+const DIRECT_MODEL = "claude-opus-4-6";
 
 const ORCHESTRATOR_PROMPT = (repoPath: string) => `You are a Creator Control Report orchestrator. Your job is to analyze a repository and produce a trust report about what the CODE actually does — specifically how it handles user funds, data, and system behavior.
 
@@ -123,25 +127,48 @@ Each category has:
 Do NOT assign risk scores or severity levels. Just describe the trust assumptions factually.
 Do NOT include any text outside the JSON object. The response must be parseable by JSON.parse().`;
 
-export async function analyzeRepo(
-  repoPath: string,
-  repoUrl: string,
-  commitSha: string
-): Promise<Report> {
-  // Accumulate ALL assistant text across the entire conversation
+export interface AnalysisResult {
+  analysis: RawAnalysis;
+  logs: string[];
+}
+
+export interface AnalyzeRepoResult {
+  report: Report;
+  logs: { claude: string[]; codex: string[] };
+}
+
+/** Run Claude analysis only — returns parsed analysis + raw logs. */
+export async function runClaudeAnalysis(repoPath: string): Promise<AnalysisResult> {
   const allAssistantText: string[] = [];
+  const logs: string[] = [];
+
+  const sdkEnv: Record<string, string> = {
+    CLAUDECODE: "",
+    PATH: process.env.PATH || "",
+    HOME: process.env.HOME || "",
+    TMPDIR: process.env.TMPDIR || "",
+  };
+
+  if (config.useBedrock) {
+    sdkEnv.CLAUDE_CODE_USE_BEDROCK = "1";
+    sdkEnv.AWS_BEARER_TOKEN_BEDROCK = process.env.AWS_BEARER_TOKEN_BEDROCK || "";
+    sdkEnv.AWS_REGION = config.awsRegion;
+  } else if (process.env.ANTHROPIC_API_KEY) {
+    sdkEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  }
 
   for await (const message of query({
     prompt: ORCHESTRATOR_PROMPT(repoPath),
     options: {
-      model: "claude-opus-4-6",
-      allowedTools: ["Read", "Glob", "Grep", "Task"],
-      disallowedTools: ["Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch"],
+      model: config.useBedrock ? BEDROCK_MODEL : DIRECT_MODEL,
+      allowedTools: ["Read", "Glob", "Grep", "Bash", "Task"],
+      disallowedTools: ["Write", "Edit", "NotebookEdit"],
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       cwd: repoPath,
       additionalDirectories: [repoPath],
       maxTurns: 200,
+      betas: ["context-1m-2025-08-07"],
       agents: agentDefinitions,
       sandbox: {
         enabled: true,
@@ -154,12 +181,9 @@ export async function analyzeRepo(
         type: "preset",
         preset: "claude_code",
         append:
-          "You are analyzing a repository for creator control and trust issues. Focus on how the creator can affect users, NOT on bugs or code quality. You are running in a sandboxed read-only environment.",
+          "You are analyzing a repository for creator control and trust issues. Focus on how the creator can affect users, NOT on bugs or code quality. You have full read access and can run commands to inspect the codebase.",
       },
-      env: {
-        ...process.env as Record<string, string>,
-        CLAUDECODE: "",
-      },
+      env: sdkEnv,
       stderr: (data: string) => {
         if (data.includes("error") || data.includes("Error")) {
           console.error("[claude]", data.trim());
@@ -168,8 +192,8 @@ export async function analyzeRepo(
     },
   })) {
     const msg = message as any;
+    logs.push(JSON.stringify(msg));
 
-    // Capture every assistant text block across the full conversation
     if (msg.type === "assistant" && msg.message?.content) {
       for (const block of msg.message.content) {
         if (block.type === "text" && block.text) {
@@ -192,30 +216,39 @@ export async function analyzeRepo(
     }
   }
 
-  // Dump full output for debugging
   const fullOutput = allAssistantText.join("\n\n---TURN---\n\n");
-  try {
-    const { writeFileSync } = await import("fs");
-    writeFileSync("orchestrator-raw-output.txt", fullOutput);
-  } catch {}
 
-  // Parse Claude's response — search through ALL turns for the JSON report
-  const analysis = parseOrchestratorOutput(fullOutput);
+  return { analysis: parseOrchestratorOutput(fullOutput), logs };
+}
 
-  // Run Codex second opinion
-  let codexReview: CodexReview;
-  try {
-    codexReview = await runCodexReview(repoPath, analysis);
-  } catch (err) {
-    console.error("Codex review failed, proceeding without:", err);
-    codexReview = {
-      missedAssumptions: [],
-      disputedAssumptions: [],
-      overallAssessment: "Codex review was not available for this analysis.",
-    };
-  }
+/** Run both Claude and Codex in parallel, combine into a signed report. */
+export async function analyzeRepo(
+  repoPath: string,
+  repoUrl: string,
+  commitSha: string,
+): Promise<AnalyzeRepoResult> {
+  const [claudeResult, codexResult] = await Promise.all([
+    runClaudeAnalysis(repoPath),
+    runCodexAnalysis(repoPath).catch((err) => {
+      console.error("Codex analysis failed, proceeding without:", err);
+      return null;
+    }),
+  ]);
 
-  return buildReport(analysis, codexReview, repoUrl, commitSha);
+  const report = buildReport(
+    claudeResult.analysis,
+    codexResult?.analysis ?? null,
+    repoUrl,
+    commitSha,
+  );
+
+  return {
+    report,
+    logs: {
+      claude: claudeResult.logs,
+      codex: codexResult?.logs ?? [],
+    },
+  };
 }
 
 function isReportJson(obj: any): boolean {
@@ -224,24 +257,20 @@ function isReportJson(obj: any): boolean {
   );
 }
 
-function parseOrchestratorOutput(text: string) {
+function parseOrchestratorOutput(text: string): RawAnalysis {
   let json: any;
 
-  // Strategy: split by turn separators and try each chunk
   const chunks = text.split(/---TURN---/);
 
-  // Try each chunk in reverse order (most recent first)
   for (let i = chunks.length - 1; i >= 0; i--) {
     const chunk = chunks[i].trim();
     if (!chunk) continue;
 
-    // 1. Direct parse of full chunk
     try {
       const parsed = JSON.parse(chunk);
       if (isReportJson(parsed)) { json = parsed; break; }
     } catch {}
 
-    // 2. Extract from markdown code fence
     const fenceMatches = [...chunk.matchAll(/```(?:json)?\s*\n([\s\S]*?)\n```/g)];
     for (const m of fenceMatches) {
       try {
@@ -251,12 +280,10 @@ function parseOrchestratorOutput(text: string) {
     }
     if (json) break;
 
-    // 3. Find JSON objects that start with {"codeType" or {"executiveSummary"
     const reportPattern = /\{[^{}]*"(?:codeType|executiveSummary|adminPrivileges)"[\s\S]*\}/g;
     const matches = chunk.match(reportPattern);
     if (matches) {
       for (const match of matches) {
-        // Try from each opening brace to find valid JSON
         for (let start = 0; start < match.length; start++) {
           if (match[start] !== "{") continue;
           let depth = 0;
@@ -279,7 +306,6 @@ function parseOrchestratorOutput(text: string) {
     if (json) break;
   }
 
-  // 4. Last resort: find the largest { ... } in the entire text
   if (!json) {
     const allText = chunks.join("\n");
     const bracePositions: number[] = [];
@@ -292,7 +318,7 @@ function parseOrchestratorOutput(text: string) {
         if (allText[end] === "{") depth++;
         if (allText[end] === "}") depth--;
         if (depth === 0) {
-          if (end - start > 500) { // Skip tiny objects
+          if (end - start > 500) {
             try {
               const parsed = JSON.parse(allText.substring(start, end + 1));
               if (isReportJson(parsed)) { json = parsed; break; }

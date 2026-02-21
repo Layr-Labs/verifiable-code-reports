@@ -1,13 +1,13 @@
-FROM --platform=linux/amd64 node:20-slim AS builder
+FROM --platform=linux/amd64 oven/bun:1 AS builder
 
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json bun.lock* ./
+RUN bun install
 COPY tsconfig.json ./
 COPY src/ ./src/
-RUN npx tsc --outDir dist
+RUN bun run tsc --outDir dist
 
-FROM --platform=linux/amd64 node:20-slim
+FROM --platform=linux/amd64 oven/bun:1-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
@@ -21,4 +21,4 @@ COPY package.json ./
 
 EXPOSE 3000
 
-CMD ["node", "dist/index.js"]
+CMD ["bun", "dist/index.js"]

@@ -77,24 +77,21 @@ export function generateMarkdown(report: Omit<Report, "markdownSummary">): strin
     lines.push(renderCategory(key, cat));
   }
 
-  // Codex second opinion
-  if (report.codexReview.overallAssessment && !report.codexReview.overallAssessment.includes("not available")) {
-    lines.push("## Second Opinion (Codex)", "");
-    lines.push(report.codexReview.overallAssessment, "");
+  // Independent Analysis (Codex)
+  const codex = report.codexAnalysis;
+  if (codex.executiveSummary) {
+    lines.push("---", "");
+    lines.push("## Independent Analysis (Codex)", "");
+    lines.push(`> **${codex.trustLabel}**${codex.trustLabelReason ? ` — ${codex.trustLabelReason}` : ""}`, "");
 
-    if (report.codexReview.missedAssumptions.length > 0) {
-      lines.push("### Additional Trust Assumptions", "");
-      for (const a of report.codexReview.missedAssumptions) {
-        lines.push(renderAssumption(a));
-      }
+    if (!codex.agrees) {
+      lines.push(`> **Disagreement:** Codex reached a different trust label than Claude.`, "");
     }
 
-    if (report.codexReview.disputedAssumptions.length > 0) {
-      lines.push("### Disputed Assumptions", "");
-      for (const d of report.codexReview.disputedAssumptions) {
-        lines.push(`- **${d.assumptionId}:** ${d.reason}`);
-      }
-      lines.push("");
+    lines.push(codex.executiveSummary, "");
+
+    for (const [key, cat] of Object.entries(codex.categories)) {
+      if (cat) lines.push(renderCategory(key, cat));
     }
   }
 

@@ -1,8 +1,8 @@
-import type { Report, CategoryReport, CodexReview } from "../report/schema.js";
+import type { Report, CategoryReport, CodexAnalysis } from "../report/schema.js";
 import { ReportSchema, CategoryReport as CategoryReportSchema } from "../report/schema.js";
 import { generateMarkdown } from "../report/markdown.js";
 
-interface RawAnalysis {
+export interface RawAnalysis {
   adminPrivileges?: CategoryReport;
   upgradeMechanisms?: CategoryReport;
   dataAccess?: CategoryReport;
@@ -16,13 +16,7 @@ interface RawAnalysis {
   codeType: "solidity" | "backend" | "mixed" | "unknown";
 }
 
-export function buildReport(
-  analysis: RawAnalysis,
-  codexReview: CodexReview,
-  repoUrl: string,
-  commitSha: string
-): Report {
-  // Only include categories that have content
+function buildCategories(analysis: RawAnalysis): Record<string, CategoryReport> {
   const categories: Record<string, CategoryReport> = {};
   const keys = [
     "adminPrivileges", "upgradeMechanisms", "dataAccess",
@@ -36,17 +30,44 @@ export function buildReport(
     }
   }
 
+  return categories;
+}
+
+export function buildReport(
+  claudeAnalysis: RawAnalysis,
+  codexAnalysis: RawAnalysis | null,
+  repoUrl: string,
+  commitSha: string,
+): Report {
+  const categories = buildCategories(claudeAnalysis);
+
+  const codexSection: CodexAnalysis = codexAnalysis
+    ? {
+        trustLabel: codexAnalysis.trustLabel as any,
+        trustLabelReason: codexAnalysis.trustLabelReason,
+        executiveSummary: codexAnalysis.executiveSummary,
+        categories: buildCategories(codexAnalysis),
+        agrees: codexAnalysis.trustLabel === claudeAnalysis.trustLabel,
+      }
+    : {
+        trustLabel: claudeAnalysis.trustLabel as any,
+        trustLabelReason: "Codex analysis was not available.",
+        executiveSummary: "",
+        categories: {},
+        agrees: true,
+      };
+
   const reportWithoutMarkdown = {
-    version: "1.0.0" as const,
+    version: "2.0.0" as const,
     generatedAt: new Date().toISOString(),
     repoUrl,
     repoCommit: commitSha,
-    codeType: analysis.codeType,
-    trustLabel: analysis.trustLabel as any,
-    trustLabelReason: analysis.trustLabelReason,
-    executiveSummary: analysis.executiveSummary,
+    codeType: claudeAnalysis.codeType,
+    trustLabel: claudeAnalysis.trustLabel as any,
+    trustLabelReason: claudeAnalysis.trustLabelReason,
+    executiveSummary: claudeAnalysis.executiveSummary,
     categories,
-    codexReview,
+    codexAnalysis: codexSection,
   };
 
   const markdownSummary = generateMarkdown(reportWithoutMarkdown);
@@ -59,9 +80,10 @@ export function buildReport(
   const parsed = ReportSchema.safeParse(report);
   if (!parsed.success) {
     console.error("Report validation failed:", parsed.error.issues);
+    throw new Error(`Report validation failed: ${parsed.error.issues.map(i => i.message).join(", ")}`);
   }
 
-  return report;
+  return parsed.data;
 }
 
 export function parseCategoryReport(raw: unknown): CategoryReport | undefined {
@@ -78,7 +100,6 @@ export function parseCategoryReport(raw: unknown): CategoryReport | undefined {
     } catch {}
   }
 
-  // Migrate from old schema (findings → trustAssumptions)
   if (raw && typeof raw === "object" && "findings" in raw) {
     const old = raw as any;
     return {
