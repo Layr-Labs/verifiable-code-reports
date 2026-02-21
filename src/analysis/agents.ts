@@ -14,7 +14,7 @@ export interface AgentDef {
   model: "sonnet" | "opus" | "haiku";
 }
 
-const analysisTools = ["Read", "Glob", "Grep", "Bash"];
+const analysisTools = ["Read", "Glob", "Grep"];
 
 // Prepend TEE context to every agent prompt
 function withTEE(prompt: string): string {

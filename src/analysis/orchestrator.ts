@@ -168,27 +168,18 @@ export async function runClaudeAnalysis(repoPath: string): Promise<AnalysisResul
     prompt: ORCHESTRATOR_PROMPT(repoPath),
     options: {
       model: config.useBedrock ? BEDROCK_MODEL : DIRECT_MODEL,
-      allowedTools: ["Read", "Glob", "Grep", "Bash", "Task"],
-      disallowedTools: ["Write", "Edit", "NotebookEdit"],
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
+      allowedTools: ["Read", "Glob", "Grep", "Task"],
+      disallowedTools: ["Write", "Edit", "Bash", "NotebookEdit", "WebFetch", "WebSearch"],
       cwd: repoPath,
       additionalDirectories: [repoPath],
       maxTurns: 200,
       betas: ["context-1m-2025-08-07"],
       agents: agentDefinitions,
-      sandbox: {
-        enabled: true,
-        autoAllowBashIfSandboxed: true,
-        filesystem: {
-          denyWrite: ["/**"],
-        },
-      },
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
         append:
-          "You are analyzing a repository for creator control and trust issues. Focus on how the creator can affect users, NOT on bugs or code quality. You have full read access and can run commands to inspect the codebase.",
+          "You are analyzing a repository for creator control and trust issues. Focus on how the creator can affect users, NOT on bugs or code quality. You have read-only access to the codebase.",
       },
       env: sdkEnv,
       stderr: (data: string) => {
