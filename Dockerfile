@@ -16,6 +16,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=builder /app/dist ./dist
+COPY src/db/migrations ./dist/db/migrations
 COPY --from=builder /app/node_modules ./node_modules
 COPY package.json ./
 
