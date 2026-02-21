@@ -8,7 +8,9 @@ const MAX_RETRIES = 5;
 const RETRY_DELAY_MINUTES = 30;
 const queue: { buildId: number; appAddress: string }[] = [];
 let running = 0;
-const activeGitRefs = new Set<string>(); // prevent duplicate analysis of same commit
+// Track active analysis by git ref to prevent duplicate work.
+// Maps ref key → promise that resolves when analysis completes.
+const activeGitRefs = new Map<string, Promise<void>>();
 
 export function enqueueBuild(buildId: number, appAddress: string) {
   queue.push({ buildId, appAddress });
@@ -84,15 +86,41 @@ async function processBuild(buildId: number, appAddress: string) {
 
   const refKey = `${build.repo_url}@${build.git_ref}`;
 
-  // Skip if another build with the same repo+ref is already analyzing
-  if (activeGitRefs.has(refKey)) {
-    console.log(`Build ${buildId} skipped — same ref already analyzing: ${refKey}`);
-    setTimeout(() => enqueueBuild(buildId, appAddress), 60_000);
+  // If the same repo+ref is already being analyzed, wait for it and copy the report
+  const activePromise = activeGitRefs.get(refKey);
+  if (activePromise) {
+    console.log(`Build ${buildId} waiting for duplicate ref to finish: ${refKey}`);
+    await activePromise;
+
+    // Copy report from the completed build with the same ref
+    const [existing] = await sql`
+      SELECT r.report_json, r.logs_json, r.attestation_json, r.signature
+      FROM reports r
+      JOIN builds b ON r.build_id = b.id
+      WHERE b.repo_url = ${build.repo_url} AND b.git_ref = ${build.git_ref}
+      ORDER BY r.created_at DESC LIMIT 1
+    `;
+
+    if (existing) {
+      await sql`
+        INSERT INTO reports (build_id, app_address, report_json, logs_json, attestation_json, signature)
+        VALUES (${buildId}, ${appAddress}, ${existing.report_json}, ${existing.logs_json}, ${existing.attestation_json}, ${existing.signature})
+      `;
+      await sql`UPDATE builds SET status = 'complete' WHERE id = ${buildId}`;
+      console.log(`Build ${buildId} completed (copied report from duplicate ref)`);
+    } else {
+      // The other build must have failed — re-enqueue this one to try fresh
+      enqueueBuild(buildId, appAddress);
+    }
     return;
   }
 
   await sql`UPDATE builds SET status = 'analyzing', retries = retries + 1, last_attempt_at = NOW() WHERE id = ${buildId}`;
-  activeGitRefs.add(refKey);
+
+  let resolve: () => void;
+  const promise = new Promise<void>((r) => { resolve = r; });
+  activeGitRefs.set(refKey, promise);
+
   console.log(`Analyzing build ${buildId} (${appAddress}) — ${refKey} [attempt ${build.retries + 1}]`);
 
   let repoPath: string | undefined;
@@ -138,6 +166,7 @@ async function processBuild(buildId: number, appAddress: string) {
     }
   } finally {
     activeGitRefs.delete(refKey);
+    resolve!();
     if (repoPath) cleanupRepo(repoPath);
   }
 }
