@@ -1,7 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { agentDefinitions } from "./agents.js";
 import { buildReport, parseCategoryReport, type RawAnalysis } from "./report-builder.js";
-import { runCodexAnalysis } from "./codex-analyzer.js";
+
 import { config } from "../config.js";
 import type { Report } from "../report/schema.js";
 
@@ -134,7 +134,7 @@ export interface AnalysisResult {
 
 export interface AnalyzeRepoResult {
   report: Report;
-  logs: { claude: string[]; codex: string[] };
+  logs: { claude: string[] };
 }
 
 /** Run Claude analysis only — returns parsed analysis + raw logs. */
@@ -217,23 +217,16 @@ export async function runClaudeAnalysis(repoPath: string): Promise<AnalysisResul
   return { analysis: parseOrchestratorOutput(fullOutput), logs };
 }
 
-/** Run both Claude and Codex in parallel, combine into a signed report. */
+/** Run Claude analysis and build a signed report. */
 export async function analyzeRepo(
   repoPath: string,
   repoUrl: string,
   commitSha: string,
 ): Promise<AnalyzeRepoResult> {
-  const [claudeResult, codexResult] = await Promise.all([
-    runClaudeAnalysis(repoPath),
-    runCodexAnalysis(repoPath).catch((err) => {
-      console.error("Codex analysis failed, proceeding without:", err);
-      return null;
-    }),
-  ]);
+  const claudeResult = await runClaudeAnalysis(repoPath);
 
   const report = buildReport(
     claudeResult.analysis,
-    codexResult?.analysis ?? null,
     repoUrl,
     commitSha,
   );
@@ -242,7 +235,6 @@ export async function analyzeRepo(
     report,
     logs: {
       claude: claudeResult.logs,
-      codex: codexResult?.logs ?? [],
     },
   };
 }

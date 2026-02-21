@@ -77,23 +77,5 @@ export function generateMarkdown(report: Omit<Report, "markdownSummary">): strin
     lines.push(renderCategory(key, cat));
   }
 
-  // Independent Analysis (Codex)
-  const codex = report.codexAnalysis;
-  if (codex.executiveSummary) {
-    lines.push("---", "");
-    lines.push("## Independent Analysis (Codex)", "");
-    lines.push(`> **${codex.trustLabel}**${codex.trustLabelReason ? ` — ${codex.trustLabelReason}` : ""}`, "");
-
-    if (!codex.agrees) {
-      lines.push(`> **Disagreement:** Codex reached a different trust label than Claude.`, "");
-    }
-
-    lines.push(codex.executiveSummary, "");
-
-    for (const [key, cat] of Object.entries(codex.categories)) {
-      if (cat) lines.push(renderCategory(key, cat));
-    }
-  }
-
   return lines.join("\n");
 }

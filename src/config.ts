@@ -14,8 +14,6 @@ const account = mnemonicToAccount(requireEnv("MNEMONIC") as `${string}`);
 
 const useBedrock = process.env.CLAUDE_CODE_USE_BEDROCK === "1";
 if (!useBedrock) requireEnv("ANTHROPIC_API_KEY");
-requireEnv("OPENAI_API_KEY");
-
 export const config = {
   port: parseInt(process.env.PORT || "3000", 10),
   account,

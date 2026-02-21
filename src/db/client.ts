@@ -16,7 +16,7 @@ export async function runMigrations() {
   `;
 
   const dir = join(dirname(fileURLToPath(import.meta.url)), "migrations");
-  const files = ["001_init.sql"];
+  const files = ["001_init.sql", "002_remove_codex.sql"];
 
   for (const file of files) {
     const [existing] = await sql`SELECT name FROM _migrations WHERE name = ${file}`;

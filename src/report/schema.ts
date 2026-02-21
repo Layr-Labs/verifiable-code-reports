@@ -59,7 +59,7 @@ export const ReportSchema = z.object({
   trustLabelReason: z.string(),
   executiveSummary: z.string(),
   categories: Categories,
-  codexAnalysis: CodexAnalysis,
+  codexAnalysis: CodexAnalysis.optional(),
   markdownSummary: z.string(),
 });
 export type Report = z.infer<typeof ReportSchema>;
